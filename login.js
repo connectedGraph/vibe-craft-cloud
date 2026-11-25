@@ -63,21 +63,56 @@ function applyForced(forced) {
   if (cur) cur.required = !forced;
 }
 
+const ERROR_MESSAGES = {
+  invalid_credentials: '用户名或密码错误',
+  account_disabled: '账号已被禁用，请联系管理员',
+  too_many_attempts: '尝试次数过多，请 15 分钟后再试',
+  missing_credentials: '请填写用户名和密码',
+  weak_password: '密码至少 8 位',
+  bad_username: '用户名只能是 3–32 位字母、数字或下划线',
+  username_taken: '这个用户名已经被占用了',
+  registration_closed: '这个实例当前没有开放注册',
+  bad_invite_code: '邀请码不正确',
+  anonymous_mode: '这个实例是匿名模式，不需要登录',
+  wrong_password: '当前密码不正确',
+  default_password: '不能把初始密码再设一遍',
+  same_password: '新密码不能和当前密码相同',
+  password_update_failed: '密码更新失败，请稍后重试',
+  unauthenticated: '登录状态已失效，请重新登录',
+  payload_too_large: '提交的内容太大',
+  network: '网络连接失败，请检查网络后重试',
+};
+
+function messageOf(err) {
+  const code = err && err.message ? err.message : String(err);
+  if (ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
+  if (/^http_5/.test(code)) return '服务器出了点问题，请稍后重试';
+  if (/^http_4/.test(code)) return '请求没有被服务器接受，请检查填写内容';
+  return code;
+}
+
 function fail(message) {
-  $('#err').textContent = message;
-  $('#err').classList.add('on');
+  const el = $('#err');
+  el.textContent = message;
+  el.classList.add('on');
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function call(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-    credentials: 'same-origin',
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw new Error('network');
+  }
   let data = null;
   try { data = await res.json(); } catch { /* 空响应 */ }
-  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  if (!res.ok) throw new Error((data && data.error) || ('http_' + res.status));
   return data || {};
 }
 
@@ -119,7 +154,7 @@ $('#f-login').onsubmit = async (e) => {
     if (out.user && out.user.mustChangePassword) { applyForced(true); show('change'); }
     else location.replace(nextUrl);
   } catch (err) {
-    fail(err.message);
+    fail(messageOf(err));
     btn.disabled = false;
   }
 };
@@ -137,7 +172,7 @@ $('#f-register').onsubmit = async (e) => {
     });
     location.replace(nextUrl);
   } catch (err) {
-    fail(err.message);
+    fail(messageOf(err));
     btn.disabled = false;
   }
 };
@@ -152,7 +187,7 @@ $('#f-change').onsubmit = async (e) => {
     await call('/api/v1/auth/password', { current: f.get('current') || '', next: f.get('next') });
     location.replace(nextUrl);
   } catch (err) {
-    fail(err.message);
+    fail(messageOf(err));
     btn.disabled = false;
   }
 };

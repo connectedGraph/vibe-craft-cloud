@@ -1,0 +1,147 @@
+{
+  "docs": [
+    {
+      "id": "gemini-agent-01",
+      "title": "Agent 本质：LLM + while 循环 + 工具",
+      "category": "AI Agent",
+      "tags": [
+        "ai-agent",
+        "tool-calling",
+        "gemini",
+        "en-expression"
+      ],
+      "question": "En-zh bro explain how ai agents work.how to write the tool parser what actly does the llm tool call api look like",
+      "answer": "At its core, an AI agent is just an LLM trapped in a while loop with access to external tools. Unlike a standard chatbot that generates text once and stops, an agent follows a Reason-Act-Observe cycle: you send a prompt plus a menu of available functions, the LLM decides whether to answer directly or ask for a tool, your application code actually executes that tool locally or via API, and then you feed the result back into the LLM until it has enough context to give a final answer.\n\nCrucially, the LLM never executes code itself—it is strictly a text-in, text-out prediction engine. When an LLM \"calls a tool,\" it is simply outputting a structured payload (usually JSON or special XML tokens) that says, \"Hey, please run get_weather with city=\"Ningbo\" for me and tell me what happened.\"\n\n## 1. What the LLM Tool Call API Actually Looks Like\n\nIn modern APIs (like OpenAI's Chat Completions or Anthropic's Messages API), tool calling happens across a three-step HTTP payload exchange: sending tool definitions, receiving a tool call request, and returning the tool's output.\n\n### Step A: You send the user prompt + JSON Schema tool definitions (tools)\n\n```json\n{\n  \"model\": \"gpt-4o\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What's the weather in Ningbo?\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get current temperature for a given city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": { \"type\": \"string\", \"description\": \"City name, e.g. Ningbo\" }\n          },\n          \"required\": [\"city\"]\n        }\n      }\n    }\n  ]\n}\n```\n\n### Step B: The LLM stops generating normal text and returns tool_calls\n\n```json\n{\n  \"choices\": [\n    {\n      \"finish_reason\": \"tool_calls\",\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": null,\n        \"tool_calls\": [\n          {\n            \"id\": \"call_99x88y77z\",\n            \"type\": \"function\",\n            \"function\": {\n              \"name\": \"get_weather\",\n              \"arguments\": \"{\\\"city\\\":\\\"Ningbo\\\"}\"\n            }\n          }\n        ]\n      }\n    }\n  ]\n}\n```\n\nNotice that `arguments` comes back as an escaped JSON string (not a parsed dictionary), and every call has a unique id so the model can match results back to requests when running parallel tool calls.\n\n### Step C: Your backend runs the function and appends a role: \"tool\" message\n\n```json\n{\n  \"model\": \"gpt-4o\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What's the weather in Ningbo?\" },\n    {\n      \"role\": \"assistant\",\n      \"tool_calls\": [\n        {\n          \"id\": \"call_99x88y77z\",\n          \"type\": \"function\",\n          \"function\": { \"name\": \"get_weather\", \"arguments\": \"{\\\"city\\\":\\\"Ningbo\\\"}\" }\n        }\n      ]\n    },\n    {\n      \"role\": \"tool\",\n      \"tool_call_id\": \"call_99x88y77z\",\n      \"content\": \"{\\\"temp_c\\\": 18, \\\"condition\\\": \\\"Cloudy\\\"}\"\n    }\n  ]\n}\n```\n\n## 2. How to Write a Tool Parser (and Dispatch Loop)\n\nWhen using hosted APIs (OpenAI, Gemini, Claude), the provider's inference server already parses raw model tokens into that clean tool_calls JSON object for you, so your \"parser\" is really a schema-validating dispatcher. However, if you self-host open-source models (via vLLM, llama.cpp, or raw prompts) or want bulletproof execution, your parser needs to handle two things: extracting the structured call and validating arguments safely before execution.\n\nHere is a clean, production-style Python pattern using Pydantic so malformed LLM JSON never crashes your runtime:\n\n```python\nimport json\nimport re\nfrom typing import Callable, Dict, Any\nfrom pydantic import BaseModel, ValidationError\n\n# 1. Define strict input schemas using Pydantic\nclass WeatherArgs(BaseModel):\n    city: str\n\ndef get_weather(city: str) -> dict:\n    return {\"city\": city, \"temp_c\": 18, \"condition\": \"Cloudy\"}\n\n# 2. Registry mapping tool names -> (PydanticValidator, ActualFunction)\nTOOL_REGISTRY: Dict[str, tuple[type[BaseModel], Callable]] = {\n    \"get_weather\": (WeatherArgs, get_weather),\n}\n\n# 3. Raw text parser (needed if your model outputs <tool_call>...</tool_call> tags)\ndef extract_raw_tool_calls(raw_text: str) -> list[dict]:\n    pattern = r\"<tool_call>\\s*(\\{.*?\\})\\s*</tool_call>\"\n    matches = re.findall(pattern, raw_text, flags=re.DOTALL)\n    parsed = []\n    for m in matches:\n        try:\n            parsed.append(json.loads(m))\n        except json.JSONDecodeError:\n            # Handle broken JSON gracefully instead of crashing\n            parsed.append({\"error\": \"Invalid JSON syntax generated by model\"})\n    return parsed\n\n# 4. Safe execution dispatcher (works for both API tool_calls & parsed raw calls)\ndef execute_tool_call(name: str, raw_arguments: str | dict) -> str:\n    if name not in TOOL_REGISTRY:\n        return json.dumps({\"error\": f\"Unknown tool '{name}'. Check available tools.\"})\n\n    schema_cls, func = TOOL_REGISTRY[name]\n\n    try:\n        args_dict = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments\n        validated_args = schema_cls(**args_dict)  # Type-checks and coerces fields\n        result = func(**validated_args.model_dump())\n        return json.dumps(result)\n    except (json.JSONDecodeError, ValidationError) as e:\n        # Feed the validation error BACK to the LLM so it can self-correct!\n        return json.dumps({\"error\": f\"Argument validation failed: {str(e)}\"})\n```\n\n## 3. Three Pro Tips That Make or Break Tool Parsers\n\n**Never raise exceptions to the user on bad tool JSON—feed errors back to the LLM.** Models are remarkably good at self-correcting when a role: \"tool\" message replies with \"Argument validation failed: 'city' is required\". Letting the agent retry once or twice turns a brittle script into an autonomous workflow.\n\n**Handle streaming chunks carefully.** When stream=True, the API does not send tool_calls in one piece; it drips arguments fragment by fragment ({\"ci, ty\":, \"Ning, bo\"}) across delta chunks indexed by tool_calls[0].index. You must buffer those string fragments per index until finish_reason == \"tool_calls\" arrives before calling json.loads().\n\n**Never use eval() or exec() to dispatch tools.** Always look up functions in an explicit allowlist dictionary (TOOL_REGISTRY). If an attacker sneaks a prompt injection into a webpage or email that your agent reads, an unrestricted dispatcher could let the LLM execute arbitrary functions.",
+      "annotations": [
+        {
+          "id": "a101",
+          "text": "trapped in a while loop",
+          "note": "“被关进 while 循环里”。把 Agent 的本质讲得很形象，比 an iterative process 生动得多。"
+        },
+        {
+          "id": "a102",
+          "text": "Reason-Act-Observe cycle",
+          "note": "思考—行动—观察闭环。Agent 文章里的标准说法。"
+        },
+        {
+          "id": "a103",
+          "text": "text-in, text-out prediction engine",
+          "note": "“文本进、文本出”的预测引擎。强调 LLM 本身只做 token 预测，不执行代码。"
+        },
+        {
+          "id": "a104",
+          "text": "turns a brittle script into an autonomous workflow",
+          "note": "把脆弱的脚本变成自主工作流。brittle 形容系统“一碰就碎”很地道，比 fragile 更偏工程语境。"
+        },
+        {
+          "id": "a105",
+          "text": "drips arguments fragment by fragment",
+          "note": "参数一块一块地“滴”出来。drip 用来形容流式输出很传神；比 sends gradually 有画面感。"
+        }
+      ],
+      "updatedAt": 1795562232556
+    },
+    {
+      "id": "gemini-agent-02",
+      "title": "为什么 arguments 是 JSON 字符串而不是对象",
+      "category": "AI Agent",
+      "tags": [
+        "ai-agent",
+        "tool-calling",
+        "gemini",
+        "en-expression"
+      ],
+      "question": "Wait bro in step B llm output the full json string not a json object.why ?Because llm can only predict the next token ? but i think in my view llm dont generate the json schema when call tool. in deepseek opensource models they generate xml like text(actly not a xml but like xml syntax, they use a obscure char to pretend the xml tag \"〈\" actly not <) or maybe it is not the \"〈\" idk the unicode actually\n\numm so the api return should be transferred from llm dialect to json schema right?so why api dont return the json object but a string ?",
+      "answer": "You hit the nail on the head on both counts! Your intuition about how models like DeepSeek actually emit special tokens under the hood—and how the inference server acts as a translator—is spot-on. Let's break down both parts of your question.\n\n## 1. What Open-Source Models (like DeepSeek) Actually Output Under the Hood\n\nYou are 100% right that the LLM itself does not natively output an OpenAI-style tool_calls JSON envelope. During post-training (SFT/RL), each model family is taught its own chat template dialect using dedicated special tokens (registered as single token IDs in the tokenizer vocabulary) so the model never confuses a tool call with normal user text that happens to contain < or >.\n\nFor example, DeepSeek-V3 / R1 uses full-width Unicode brackets (<｜tool▁calls▁begin｜>, <｜tool▁call▁begin｜>, <｜tool▁sep｜> — using ｜ U+FF5C and ▁ U+2581) wrapped around the function name and arguments. Qwen uses <tool_call>...</tool_call>, and Llama uses <|python_tag|>. When you run vLLM, SGLang, or DeepSeek's hosted API, their server-side tool parser intercepts those raw tokens, strips out the ｜ / ▁ dialect, and normalizes everything into the standard OpenAI API response format.\n\n## 2. So If the Server Already Translates It, Why Return arguments as a String Instead of a JSON Object?\n\nThere are three real engineering reasons why OpenAI designed arguments as a raw string instead of a parsed object—and why the entire ecosystem got locked into it:\n\n**Streaming (stream=True) would be impossible with a JSON object.** In JSON, an object ({\"city\": \"Ningbo\"}) cannot be half-valid mid-stream without constantly mutating keys or breaking schema parsers. By typing arguments as a string, the server can simply forward each token chunk (\"{\\\"ci\", \"ty\\\":\", \"\\\"Ningbo\\\"}\") as it arrives from the GPU, letting the client concatenate the string and parse it once at the end.\n\n**Fault tolerance when the LLM hallucinates broken JSON.** LLMs are probabilistic next-token predictors—sometimes they forget a closing } or mess up quotes, especially without strict constrained decoding. If the API promised arguments was a valid JSON object, a single syntax error from the LLM would force the API gateway itself to throw a 500 Internal Server Error or fail serialization. Returning a string lets the API succeed (200 OK) and hands the raw broken text to your code so you can catch JSONDecodeError and tell the LLM to fix it.\n\n**Pass-through efficiency & preserving exact formatting.** In your backend, you almost always pass arguments straight into a validator like json.loads() or Pydantic's model_validate_json(). Keeping it as a string avoids double-serialization (Server parses string → builds object → serializes HTTP JSON → Client parses HTTP JSON → re-serializes for Pydantic) and preserves exact whitespace/key ordering if you need to append the assistant's tool_calls message back into the conversation history verbatim.\n\n(Note: Newer APIs like Anthropic's Messages API and OpenAI's newer Responses API actually switched to returning input / arguments as a parsed JSON object for non-streaming calls—or sending input_json_delta events during streaming—precisely because developers kept asking this exact question!)",
+      "annotations": [
+        {
+          "id": "a201",
+          "text": "You hit the nail on the head",
+          "note": "一针见血 / 说到点子上了。口语里夸对方判断准确，比 You are right 更有力。"
+        },
+        {
+          "id": "a202",
+          "text": "under the hood",
+          "note": "底层、引擎盖下面。讲实现细节时的高频表达，等于 internally / at the implementation level。"
+        },
+        {
+          "id": "a203",
+          "text": "chat template dialect",
+          "note": "聊天模板“方言”。形容各家模型用私有特殊 token 形成的互不兼容的输出格式。"
+        },
+        {
+          "id": "a204",
+          "text": "the entire ecosystem got locked into it",
+          "note": "整个生态被锁死在这个设计上。lock into 表示被绑定、很难迁移，常用于技术债和历史包袱。"
+        },
+        {
+          "id": "a205",
+          "text": "spot-on",
+          "note": "完全正确、精准。口语形容词，比 exactly right 更轻快。"
+        }
+      ],
+      "updatedAt": 1795562232556
+    },
+    {
+      "id": "gemini-agent-03",
+      "title": "用 _explanation 字段优化工具调用等待体验",
+      "category": "AI Agent",
+      "tags": [
+        "ai-agent",
+        "tool-calling",
+        "gemini",
+        "en-expression"
+      ],
+      "question": "Bro i heard of one thing that can make the tool call wait more friendly\n\nitis justlike\n\nset a parameter for all the tool call \"explaination\"in the first parameters to ask llms to generate the sentence first (like searching for \"why xi jinpin is president\" or checking the api a11y that shit) then when the first parameter is over (not the whole toolcall object( the over signal arrives) ) then yhe backend can parse and sent to the frontend to display the tool call block cards.",
+      "answer": "Yes—that is a very real, battle-tested UX trick used in production agent UIs (sometimes called an _intent or explanation field). Instead of letting the user stare at a blank screen or a generic \"Running search_web...\" spinner while the LLM slowly generates 500 tokens of complex JSON arguments (like a massive SQL query or file edit), you inject a human-readable explanation property as the very first key in every tool's JSON Schema, parse it mid-stream the instant that first field closes, and push a live status card to the frontend immediately.\n\n## 1. Why Putting explanation First Works (And One Crucial Catch)\n\nBecause autoregressive LLMs generate tokens strictly left-to-right, the order of keys in your JSON Schema properties (and required array) strongly guides the order in which the model emits keys. When explanation comes first, the model generates {\"explanation\": \"Checking API accessibility and status...\", \"url\": ...}—giving you the complete sentence within the first ~10–15 tokens, long before the heavy payload finishes streaming.\n\n**The Catch: Never execute the tool when explanation finishes—only render the UI card in a \"preparing\" / \"running\" state.** You must still wait for the full tool call (finish_reason == \"tool_calls\") before executing the backend function, because the remaining parameters are still streaming in. Also note that some strict structured-output backends sort JSON keys alphabetically, so naming it _explanation or a_explanation (or checking your provider's key-ordering behavior) ensures it stays first even if keys get sorted.\n\n## 2. Schema + Streaming Partial-Field Extractor (Python)\n\nInstead of trying to run json.loads() on broken half-JSON every chunk, you can detect the closing quote of the first string field (\"explanation\": \"...\") using a tiny regex or state check on the growing arguments buffer, emit an SSE event (tool_card_preview) to your frontend once, and let the rest of the stream finish normally.\n\n```python\nimport re\nimport json\n\n# 1. Inject `_explanation` as the FIRST property on every tool schema\ndef with_explanation(tool_schema: dict) -> dict:\n    params = tool_schema[\"function\"][\"parameters\"]\n    new_props = {\n        \"_explanation\": {\n            \"type\": \"string\",\n            \"description\": \"A short, user-friendly sentence describing what you are doing right now (e.g., 'Searching docs for API auth').\"\n        },\n        **params.get(\"properties\", {})\n    }\n    params[\"properties\"] = new_props\n    params[\"required\"] = [\"_explanation\", *params.get(\"required\", [])]\n    return tool_schema\n\n# 2. Detect when `_explanation` finishes mid-stream (handles escaped quotes \\\")\nEXPLANATION_DONE_RE = re.compile(r'^\\s*\\{\\s*\"_explanation\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"')\n\nclass StreamingToolBuffer:\n    def __init__(self, tool_call_id: str, tool_name: str):\n        self.id = tool_call_id\n        self.name = tool_name\n        self.buffer = \"\"\n        self.card_emitted = False\n\n    def feed_delta(self, delta_chunk: str) -> dict | None:\n        self.buffer += delta_chunk\n\n        # Only check until we emit the UI card once\n        if not self.card_emitted:\n            match = EXPLANATION_DONE_RE.match(self.buffer)\n            if match:\n                self.card_emitted = True\n                # Unescape JSON string safely\n                explanation_text = json.loads(f'\"{match.group(1)}\"')\n                return {\n                    \"event\": \"tool_card_preview\",\n                    \"tool_call_id\": self.id,\n                    \"tool\": self.name,\n                    \"status\": \"preparing\",\n                    \"explanation\": explanation_text,\n                }\n        return None\n```\n\n## 3. How the End-to-End Timeline Looks to the User\n\n**Token 1–3 (tool_calls delta starts):** Your backend sees function.name = \"web_search\" and creates a StreamingToolBuffer.\n\n**Token 4–15 (\"_explanation\": \"Searching why...\" closes):** feed_delta() matches the closing quote and immediately pushes tool_card_preview over SSE. The frontend renders a sleek card saying \"Searching why...\" with a subtle pulse animation—zero awkward blank screen.\n\n**Token 16–200 (remaining args stream in):** The user comfortably reads the card while the model finishes generating query, filters, or a 200-line code patch in the background.\n\n**finish_reason == \"tool_calls\":** Backend parses the complete JSON (stripping _explanation before passing kwargs to your Python function), runs the tool, and updates the same card ID to status: \"done\" with the result.",
+      "annotations": [
+        {
+          "id": "a301",
+          "text": "battle-tested UX trick",
+          "note": "经过实战检验的 UX 技巧。battle-tested 比 proven 更有画面感，强调“在真实产品里踩过坑”。"
+        },
+        {
+          "id": "a302",
+          "text": "stare at a blank screen",
+          "note": "盯着空白屏幕干等。描述糟糕等待体验的常用说法。"
+        },
+        {
+          "id": "a303",
+          "text": "The Catch",
+          "note": "但是有个坑 / 隐藏代价。口语里抛转折、提醒注意事项，比 However 自然。"
+        },
+        {
+          "id": "a304",
+          "text": "strictly left-to-right",
+          "note": "严格从左到右。解释自回归生成顺序时的标准表达。"
+        },
+        {
+          "id": "a305",
+          "text": "in the background",
+          "note": "在后台（同时进行）。用户读卡片的同时，模型在后台把参数生成完。"
+        }
+      ],
+      "updatedAt": 1795562232557
+    }
+  ],
+  "activeDocId": "gemini-agent-01",
+  "categories": [
+    "General",
+    "Vocabulary",
+    "Grammar",
+    "Reading",
+    "AI Agent"
+  ],
+  "ui": {
+    "mode": "view",
+    "globalMode": false,
+    "drawerOpen": false,
+    "sidebarOpen": true,
+    "editingAnnotationId": null,
+    "searchQuery": "",
+    "searchCategory": "",
+    "searchTag": "",
+    "deepSearch": false,
+    "zenMode": false
+  }
+}

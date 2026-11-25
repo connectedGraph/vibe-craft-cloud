@@ -93,6 +93,8 @@
             100% { transform: rotate(360deg); }
         }
     </style>
+    <script src="../shared/sync-client.js"></script>
+    <script src="../shared/sync-widget.js"></script>
 </head>
 <body>
 
@@ -762,6 +764,53 @@
         };
 
         window.addEventListener('DOMContentLoaded', app.init);
+
+        // ===== Cloud Sync =====
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!window.SyncWidget) return;
+
+            const applyCardChanges = (changes) => {
+                const data = Store.getData();
+                let changed = false;
+                for (const ch of changes) {
+                    const idx = data.cards.findIndex(c => c.id === ch.id);
+                    if (ch.op === 'delete') {
+                        if (idx !== -1) { data.cards.splice(idx, 1); changed = true; }
+                        continue;
+                    }
+                    if (!ch.data) continue;
+                    const incoming = {
+                        ...ch.data,
+                        updatedAt: Math.max(Number(ch.data.updatedAt) || 0, Number(ch.updatedAt) || 0)
+                    };
+                    if (idx === -1) {
+                        data.cards.push(incoming);
+                        changed = true;
+                    } else if (Number(incoming.updatedAt) > Number(data.cards[idx].updatedAt || data.cards[idx].created || 0)) {
+                        data.cards[idx] = incoming;
+                        changed = true;
+                    }
+                }
+                if (changed) Store.saveData(data);
+                return changed;
+            };
+
+            window.SyncWidget.mount({
+                app: 'contextly',
+                collections: {
+                    cards: {
+                        read: () => Store.getData().cards,
+                        getId: c => c.id,
+                        getUpdatedAt: c => Number(c.updatedAt) || Number(c.created) || 0,
+                        applyChanges: applyCardChanges
+                    }
+                },
+                onApplied: () => {
+                    const view = ['home', 'library', 'settings'].includes(app.currentView) ? app.currentView : 'home';
+                    app.navigate(view);
+                }
+            });
+        });
 
     </script>
 </body>

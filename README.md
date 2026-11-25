@@ -4,6 +4,125 @@
 
 A collection of lightweight, zero-dependency, web-based Single Page Applications (SPAs) designed to optimize development, learning, and knowledge management workflows.
 
+> **This fork adds optional cloud sync.** localStorage remains the local source of truth; the sync server only relays incremental changes between devices and keeps a backup. See [Cloud Sync](#cloud-sync) and [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md). Currently wired up for **Prompt Capsule**; the other tools use the same client (`shared/sync-client.js`) with their own adapter.
+
+---
+
+## Cloud Sync
+
+### What it is
+
+- **账号体系**：账号密码登录，`scrypt` 哈希，JWT 放 HttpOnly Cookie（不放 localStorage）。令牌带 `pv=改密时间`，改密后旧会话全部失效；`jti` 支持按设备踢下线。登录限流 5 次 / 15 分钟。
+- **SQLite 持久化**：`user` / `api_token` / `session` / `records` / `changes` / `meta`，零 npm 依赖（Node 内置 `node:sqlite`）。
+- **数据按账号隔离**：同步记录的主键是 `(user_id, app, collection, id)`，两个账号即使文档 id 相同也互不可见。
+- **记录级增量同步**：文档/卡片逐条按 `updatedAt` 做 LWW，不整份覆盖；删除用墓碑。
+- **冲突不丢**：较旧的版本另存为「标题 · 冲突副本」。
+- **版本历史与回滚**：每次修改都进 `changes` 日志，Prompt Capsule 页头的时钟按钮可查看并恢复任一历史版本。
+- **云端备份**：一键导出账号全部记录为 JSON，支持合并恢复或覆盖恢复。
+- **多工具**：Prompt Capsule、Contextly、Expressing、Desktop Lite 都已接入同一套同步（后三个用右下角浮层）。
+- **PWA**：manifest + service worker，可安装到桌面/手机，断网时外壳仍可打开。
+- **前端仍可离线**：直接双击 HTML 打开时不会连后端，所有数据留在 localStorage，只是没有同步。
+
+### 快速开始
+
+```bash
+./install.sh                 # 检查 Node、生成 .env、创建 data 目录
+node server/server.mjs       # 默认 http://127.0.0.1:8792
+```
+
+打开 <http://127.0.0.1:8792>。首次账号 `admin / 123456`，登录后会强制改密。
+之后打开 `/prompt-capsule/index.html`，左下角显示 `Synced` 即同步正常。
+
+线上实例：<https://craft.6767.chat/>（tx，systemd `vibe-craft.service`）。
+
+### 账号模式
+
+| `AUTH_MODE` | 行为 |
+|---|---|
+| `off` | 不登录，所有访问算 `admin`（只适合本机演示） |
+| `self` | 单账号，不开放注册（默认） |
+| `public` | 开放注册，数据按账号隔离；可再加邀请码 |
+
+环境变量（也可写在项目根 `.env`）：
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `8792` | HTTP 端口 |
+| `HOST` | `127.0.0.1` | 监听地址（反代后设 `0.0.0.0`） |
+| `DATA_DIR` | `server/data` | SQLite 与密钥目录 |
+| `AUTH_MODE` | `self` | `off` / `self` / `public` |
+| `AUTH_SECRET` | 自动生成 | JWT 签名密钥，缺省写入 `data/.auth-secret`（0600） |
+| `SESSION_HOURS` | `8` | 普通会话有效期 |
+| `REMEMBER_DAYS` | `30` | 「保持登录」有效期 |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `123456` | 首次启动创建的管理员；默认密码强制改密 |
+| `REGISTRATION_OPEN` | `1` | `public` 模式下是否开放注册 |
+| `REGISTRATION_CODE` | 空 | 注册邀请码 |
+| `ALLOWED_ORIGINS` | 空 | 跨域来源（同源部署不需要） |
+| `SYNC_TOKEN` | 空 | 兼容旧部署：视为 `admin` 的长期 Bearer 令牌 |
+
+### 登录与页面
+
+- 未登录访问任何页面 → `302 /login.html?next=...`
+- 登录成功后跳回原页面；首次登录强制改密（不用再输一遍旧密码）
+- 浏览器只保存 `vc_session`（HttpOnly、SameSite=Lax）
+- 同步客户端 `shared/sync-client.js` 自动探测同源后端：可用则走 Cookie 账号模式，不可用则回退到手动 `Server URL + Token` 模式
+
+### 管理员
+
+登录 `admin` 后可直接调用（也可以用 `/admin` 页面，后续补 UI）：
+
+```
+GET    /api/v1/admin/users
+POST   /api/v1/admin/users            { username, password, role }
+PATCH  /api/v1/admin/users/:username  { disabled?, password?, mustChange? }
+GET    /api/v1/admin/settings
+POST   /api/v1/admin/settings         { mode?, registrationOpen?, inviteCode? }
+GET    /api/v1/admin/tokens
+POST   /api/v1/admin/tokens           { name }  → 返回一次明文 vck_ 令牌
+DELETE /api/v1/admin/tokens/:id
+```
+
+### API
+
+```
+GET  /healthz
+GET  /api/v1/auth/me
+POST /api/v1/auth/login | logout | register | password
+GET  /api/v1/sync/state?app=prompt-capsule
+GET  /api/v1/sync/pull?app=prompt-capsule&since=<seq>&limit=500
+POST /api/v1/sync/push
+```
+
+认证优先级：`X-Auth-User`（网关模式）→ `Authorization: Bearer vck_/JWT` → `vc_session` Cookie → `AUTH_MODE=off`。
+完整协议与表结构：[docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md)。
+
+### 测试
+
+```bash
+# 需要 server(8792)、headless Chrome(9223)
+# 服务端：ADMIN_PASSWORD=testpass123 SYNC_TOKEN=test-token-123 DATA_DIR=/tmp/vc-test node server/server.mjs
+node tests/e2e-sync.mjs
+```
+
+覆盖：首次全量上传、远端拉取、本地推送、冲突副本。
+
+### 目录
+
+```
+login.html / login.js      # 登录、注册、强制改密页
+shared/sync-client.js      # 浏览器端同步客户端 + 账号探测
+server/server.mjs          # HTTP 路由、静态托管、同步 API
+server/auth.mjs            # 密码、JWT、Cookie、用户、限流
+server/db.mjs              # SQLite schema 与迁移
+docs/SYNC-DESIGN.md        # 协议与数据模型
+tests/e2e-sync.mjs         # 真实浏览器端到端验证
+```
+
+### 部署
+
+放在 HTTPS 反代后，`HOST=0.0.0.0`，`server/data` 权限 `700`、`.auth-secret` 与 `.env` 权限 `600`。
+服务端只存密码哈希（scrypt）与同步内容，不存明文密码；`api_token` 也只存 sha256。
+
 ---
 
 ## Included Tools
@@ -122,6 +241,19 @@ To launch ADHD Text:
 # 中文版
 
 [Back to English Version / 返回英文版](#vibe-craft)
+
+> **本分支加入账号体系与云同步。** localStorage 仍是本地真源，服务端只做多设备增量中转与备份；账号密码登录，数据按账号隔离。协议见 [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md)。目前 Prompt Capsule 已接入，其余工具用同一个 `shared/sync-client.js` 配 adapter 即可。
+
+## 云同步快速开始
+
+```bash
+./install.sh                     # 生成 .env、准备 data 目录
+node server/server.mjs           # 默认 127.0.0.1:8792
+```
+
+打开 <http://127.0.0.1:8792>，首次账号 `admin / 123456`，登录后强制改密。之后打开 `prompt-capsule/index.html`，左下角绿点 `Synced` 即表示同步正常。两端同时改同一篇时，较新的版本胜出，旧的另存为「冲突副本」。
+
+---
 
 一系列轻量级、零依赖的纯网页单页面应用（SPA）提效工具集合，旨在优化软件开发、系统学习和个人知识管理的日常工作流。
 

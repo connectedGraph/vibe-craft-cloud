@@ -82,6 +82,8 @@
         #left-sidebar { transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .sidebar-closed #left-sidebar { margin-left: -18rem; }
     </style>
+    <script src="../shared/sync-client.js"></script>
+    <script src="../shared/sync-widget.js"></script>
 </head>
 <body class="bg-gray-50 h-screen w-screen flex text-slate-800 overflow-hidden" id="app-body">
 
@@ -417,6 +419,80 @@
         }
 
         window.addEventListener('DOMContentLoaded', initApp);
+
+        // ===== Cloud Sync =====
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!window.SyncWidget) return;
+
+            window.SyncWidget.mount({
+                app: 'expressing',
+                collections: {
+                    docs: {
+                        read: () => appState.docs,
+                        getId: d => d.id,
+                        getUpdatedAt: d => Number(d.updatedAt) || 0,
+                        applyChanges: (changes) => {
+                            let changed = false;
+                            for (const ch of changes) {
+                                const idx = appState.docs.findIndex(d => d.id === ch.id);
+                                if (ch.op === 'delete') {
+                                    if (idx !== -1) { appState.docs.splice(idx, 1); changed = true; }
+                                    continue;
+                                }
+                                if (!ch.data) continue;
+                                const incoming = {
+                                    ...ch.data,
+                                    updatedAt: Math.max(Number(ch.data.updatedAt) || 0, Number(ch.updatedAt) || 0)
+                                };
+                                if (idx === -1) {
+                                    appState.docs.push(incoming);
+                                    changed = true;
+                                } else if (Number(incoming.updatedAt) > Number(appState.docs[idx].updatedAt || 0)) {
+                                    appState.docs[idx] = incoming;
+                                    changed = true;
+                                }
+                            }
+                            if (changed) {
+                                if (!appState.docs.find(d => d.id === appState.activeDocId)) {
+                                    appState.activeDocId = appState.docs.length ? appState.docs[0].id : null;
+                                }
+                                window.persistState();
+                            }
+                            return changed;
+                        }
+                    },
+                    settings: {
+                        read: () => [{
+                            id: '__singleton__',
+                            categories: appState.categories,
+                            updatedAt: Number(appState.__categoriesUpdatedAt) || 0
+                        }],
+                        getId: r => r.id,
+                        getUpdatedAt: r => Number(r.updatedAt) || 0,
+                        applyChanges: (changes) => {
+                            let changed = false;
+                            for (const ch of changes) {
+                                if (ch.op === 'delete' || !ch.data || !Array.isArray(ch.data.categories)) continue;
+                                if (JSON.stringify(ch.data.categories) === JSON.stringify(appState.categories)) continue;
+                                appState.categories = ch.data.categories;
+                                appState.__categoriesUpdatedAt = ch.updatedAt;
+                                changed = true;
+                            }
+                            if (changed) {
+                                window.updateCategoryDropdowns();
+                                window.persistState();
+                            }
+                            return changed;
+                        }
+                    }
+                },
+                onApplied: () => {
+                    window.updateCategoryDropdowns();
+                    window.renderDocList();
+                    if (appState.activeDocId) window.loadDoc(appState.activeDocId);
+                }
+            });
+        });
 
         function createMockData() {
             const mockDoc = {

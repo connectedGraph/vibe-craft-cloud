@@ -9,6 +9,8 @@
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- VibeSync 云同步客户端 -->
+    <script src="../shared/sync-client.js"></script>
     
     <!-- KaTeX 支持 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
@@ -109,6 +111,11 @@
                 </button>
             </div>
             <input type="file" id="file-input" class="hidden" accept=".bri,.json,.txt" onchange="window.handleFileImport(this)">
+            <button onclick="window.openSyncSettings()" id="sync-badge"
+                    class="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-slate-600 bg-white/50 border border-white/60 rounded-lg hover:bg-white hover:shadow-sm transition-all">
+                <span id="sync-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
+                <span id="sync-label">Cloud Sync Off</span>
+            </button>
         </div>
     </aside>
 
@@ -169,6 +176,9 @@
                     </button>
                     <button onclick="window.exportMarkdown()" class="text-slate-400 hover:text-slate-700 p-2 rounded-lg hover:bg-white/50 transition-colors" title="Export Hyperlinked Markdown">
                         <i class="ph-bold ph-file-md text-xl"></i>
+                    </button>
+                    <button onclick="window.openHistory()" class="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-white/50 transition-colors" title="Version History">
+                        <i class="ph-bold ph-clock-counter-clockwise text-xl"></i>
                     </button>
                     <button onclick="window.deleteCurrentDoc()" class="text-slate-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50/50 transition-colors" title="Delete Document">
                         <i class="ph-bold ph-trash text-xl"></i>
@@ -325,6 +335,84 @@
         </div>
     </div>
 
+    <!-- Cloud Sync Modal -->
+    <div id="sync-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/20 backdrop-blur-sm transition-opacity" onclick="window.closeSyncSettings()"></div>
+        <div class="bg-white/90 backdrop-blur-xl border border-white rounded-2xl shadow-2xl w-full max-w-md relative z-10 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white/50">
+                <h3 class="font-bold text-slate-800 text-lg">Cloud Sync</h3>
+                <button onclick="window.closeSyncSettings()" class="text-slate-400 hover:text-slate-600"><i class="ph-bold ph-x"></i></button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div id="sync-account" class="hidden">
+                    <div class="flex items-center justify-between p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl">
+                        <div class="text-sm text-slate-700">
+                            已登录：<b id="sync-user" class="text-slate-900"></b>
+                        </div>
+                        <button onclick="window.syncLogout()" class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-red-300 hover:text-red-500 transition">退出</button>
+                    </div>
+                    <div class="mt-3 text-[11px] text-slate-400 leading-relaxed">
+                        账号由同源后端管理，数据按账号隔离。浏览器只保存 HttpOnly 会话 Cookie，前端拿不到密码或令牌。
+                    </div>
+                </div>
+                <div id="sync-manual" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 mb-1.5">Server URL</label>
+                    <input type="text" id="sync-server" placeholder="https://sync.example.com"
+                           class="w-full border border-slate-200 bg-white rounded-lg px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 mb-1.5">Access Token</label>
+                    <input type="password" id="sync-token" placeholder="vck_..."
+                           class="w-full border border-slate-200 bg-white rounded-lg px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none">
+                </div>
+                <label class="flex items-center gap-2 text-sm text-slate-600 select-none">
+                    <input type="checkbox" id="sync-enabled" class="rounded border-slate-300 text-primary focus:ring-primary">
+                    Enable automatic sync
+                </label>
+                <div class="text-[11px] text-slate-400 leading-relaxed">
+                    本地数据仍是主存储；同步只负责多设备增量同步与服务端备份。
+                    冲突时云端版本胜出，本地版本会另存为「冲突副本」。
+                </div>
+                </div>
+                <div id="sync-message" class="text-xs text-slate-500 min-h-[18px]"></div>
+                <div id="sync-conflicts" class="hidden space-y-2"></div>
+            </div>
+            <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="window.testSyncConnection()" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-primary hover:text-primary transition">Test</button>
+                    <button onclick="window.syncNowManual()" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-primary hover:text-primary transition">Sync Now</button>
+                    <button onclick="window.exportCloudBackup()" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-primary hover:text-primary transition">导出云端备份</button>
+                    <button onclick="window.triggerCloudRestore()" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-primary hover:text-primary transition">从备份恢复</button>
+                </div>
+                <div class="flex gap-2">
+                    <a id="sync-admin-link" href="/admin.html" class="hidden px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:border-primary hover:text-primary transition">管理</a>
+                    <button id="sync-save" onclick="window.saveSyncSettings()" class="px-4 py-1.5 text-xs font-semibold bg-primary text-white rounded-md hover:bg-primaryDark shadow-lg shadow-indigo-200 transition">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Version History Modal -->
+    <div id="history-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/20 backdrop-blur-sm" onclick="window.closeHistory()"></div>
+        <div class="bg-white/95 backdrop-blur-xl border border-white rounded-2xl shadow-2xl w-full max-w-lg relative z-10 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white/50">
+                <div>
+                    <h3 class="font-bold text-slate-800 text-lg">版本历史</h3>
+                    <div id="history-doc" class="text-xs text-slate-400 mt-0.5"></div>
+                </div>
+                <button onclick="window.closeHistory()" class="text-slate-400 hover:text-slate-600"><i class="ph-bold ph-x"></i></button>
+            </div>
+            <div id="history-list" class="p-4 space-y-2 max-h-[60vh] overflow-y-auto"></div>
+            <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">
+                恢复操作会生成一个新版本，不会删除历史记录。
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="cloud-restore-input" class="hidden" accept=".json,.bri" onchange="window.handleCloudRestore(this)">
+
     <script>
         // --- DATA STRUCTURE & CONFIG ---
         const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -377,6 +465,12 @@
             appState.ui.drawerOpen = false;
             appState.ui.editingAnnotationId = null;
             appState.ui.globalMode = false;
+
+            // 手机默认收起侧栏，避免主内容被挤成一条
+            if (window.innerWidth < 820) {
+                appState.ui.sidebarOpen = false;
+                document.getElementById('app-body').classList.add('sidebar-closed');
+            }
             
             if (appState.docs.length > 0) {
                 if (!appState.docs.find(d => d.id === appState.activeDocId)) appState.activeDocId = appState.docs[0].id;
@@ -513,6 +607,7 @@
             const val = input.value.trim();
             if (val && !appState.categories.includes(val)) {
                 appState.categories.push(val);
+                appState.__categoriesUpdatedAt = Date.now();
                 appState.categories.sort();
                 input.value = '';
                 window.openCategoryManager(); 
@@ -534,6 +629,7 @@
             if (appState.categories.includes(newName)) { alert('Category name already exists!'); window.openCategoryManager(); return; }
             const idx = appState.categories.indexOf(oldName);
             if (idx !== -1) appState.categories[idx] = newName;
+            appState.__categoriesUpdatedAt = Date.now();
             appState.docs.forEach(doc => { if (doc.category === oldName) doc.category = newName; });
             if (appState.ui.searchCategory === oldName) appState.ui.searchCategory = newName;
             appState.categories.sort();
@@ -549,6 +645,7 @@
             if (!confirm(`Delete category "${catName}"? \n\nFiles in this category will be moved to "General".`)) return;
             appState.docs.forEach(doc => { if (doc.category === catName) doc.category = 'General'; });
             appState.categories = appState.categories.filter(c => c !== catName);
+            appState.__categoriesUpdatedAt = Date.now();
             if (appState.ui.searchCategory === catName) {
                 appState.ui.searchCategory = '';
                 document.getElementById('sidebar-category').value = '';
@@ -1097,14 +1194,47 @@
             reader.onload = (e) => {
                 try {
                     const loaded = JSON.parse(e.target.result);
-                    if(loaded.docs) {
-                        appState = loaded;
-                        window.updateCategoryDropdowns();
-                        window.renderDocList();
-                        window.loadDoc(appState.docs[0].id);
-                        window.persistState();
-                        alert("Library imported successfully.");
+                    if (!Array.isArray(loaded.docs)) throw new Error('no docs');
+
+                    // 导入前自动备份当前数据，避免合并出问题时无法回退
+                    const backupKey = 'bri_app_pro_v2_backup_' + Date.now();
+                    localStorage.setItem(backupKey, JSON.stringify(appState));
+
+                    // 按 id 合并：新 id 直接加入；同 id 取 updatedAt 更新的一版
+                    let added = 0, updated = 0, skipped = 0;
+                    const byId = new Map(appState.docs.map(d => [d.id, d]));
+                    for (const doc of loaded.docs) {
+                        if (!doc || !doc.id) { skipped++; continue; }
+                        const cur = byId.get(doc.id);
+                        if (!cur) {
+                            appState.docs.push(doc);
+                            byId.set(doc.id, doc);
+                            added++;
+                        } else if (Number(doc.updatedAt || 0) > Number(cur.updatedAt || 0)) {
+                            Object.assign(cur, doc);
+                            updated++;
+                        } else {
+                            skipped++;
+                        }
                     }
+
+                    // 分类取并集
+                    if (Array.isArray(loaded.categories)) {
+                        const set = new Set(appState.categories);
+                        for (const c of loaded.categories) set.add(c);
+                        appState.categories = [...set].sort();
+                        appState.__categoriesUpdatedAt = Date.now();
+                    }
+
+                    window.persistState();
+                    window.updateCategoryDropdowns();
+                    window.updateTagDropdown();
+                    window.renderDocList();
+                    if (!appState.docs.find(d => d.id === appState.activeDocId)) {
+                        appState.activeDocId = appState.docs[0] ? appState.docs[0].id : null;
+                    }
+                    if (appState.activeDocId) window.loadDoc(appState.activeDocId);
+                    alert(`合并完成：新增 ${added} 篇，更新 ${updated} 篇，跳过 ${skipped} 篇。\n导入前的数据已备份到 localStorage（${backupKey}）。`);
                 } catch(err) { alert("Invalid file."); }
             };
             reader.readAsText(file);
@@ -1140,6 +1270,356 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+
+        // ===== Cloud Sync (VibeSync) =====
+        function renderSyncBadge(s) {
+            const dot = document.getElementById('sync-dot');
+            const label = document.getElementById('sync-label');
+            if (!dot || !label) return;
+            const map = {
+                off: ['bg-slate-300', 'Cloud Sync Off'],
+                idle: ['bg-emerald-400', 'Synced'],
+                syncing: ['bg-indigo-400 animate-pulse', 'Syncing…'],
+                'login-required': ['bg-amber-400', 'Sign in to Sync'],
+                error: ['bg-red-400', 'Sync Error']
+            };
+            const [cls, text] = map[s.phase] || map.off;
+            dot.className = 'w-2 h-2 rounded-full ' + cls;
+            label.textContent = text;
+            label.title = s.phase === 'error'
+                ? (s.lastError || '')
+                : (s.authUser ? '账号：' + s.authUser : (s.lastSyncAt ? 'Last sync ' + new Date(s.lastSyncAt).toLocaleTimeString() : ''));
+        }
+
+        function initVibeSync() {
+            if (!window.VibeSync) { console.warn('VibeSync not loaded'); return; }
+            window.VibeSync.attach({
+                app: 'prompt-capsule',
+                collections: {
+                    docs: {
+                        read: () => appState.docs,
+                        getId: d => d.id,
+                        getUpdatedAt: d => Number(d.updatedAt) || 0,
+                        applyChanges: (changes) => {
+                            let changed = false;
+                            for (const ch of changes) {
+                                const idx = appState.docs.findIndex(d => d.id === ch.id);
+                                if (ch.op === 'delete') {
+                                    if (idx !== -1) { appState.docs.splice(idx, 1); changed = true; }
+                                    continue;
+                                }
+                                if (!ch.data) continue;
+                                const incoming = {
+                                    ...ch.data,
+                                    updatedAt: Math.max(Number(ch.data.updatedAt) || 0, Number(ch.updatedAt) || 0)
+                                };
+                                if (idx === -1) {
+                                    appState.docs.push(incoming);
+                                    changed = true;
+                                } else if (Number(incoming.updatedAt) > Number(appState.docs[idx].updatedAt || 0)) {
+                                    appState.docs[idx] = incoming;
+                                    changed = true;
+                                }
+                            }
+                            if (changed) {
+                                if (!appState.docs.find(d => d.id === appState.activeDocId)) {
+                                    appState.activeDocId = appState.docs.length ? appState.docs[0].id : null;
+                                }
+                                window.persistState();
+                            }
+                            return changed;
+                        }
+                    },
+                    settings: {
+                        read: () => [{
+                            id: '__singleton__',
+                            categories: appState.categories,
+                            updatedAt: Number(appState.__categoriesUpdatedAt) || 0
+                        }],
+                        getId: r => r.id,
+                        getUpdatedAt: r => Number(r.updatedAt) || 0,
+                        applyChanges: (changes) => {
+                            let changed = false;
+                            for (const ch of changes) {
+                                if (ch.op === 'delete' || !ch.data || !Array.isArray(ch.data.categories)) continue;
+                                const incoming = ch.data.categories;
+                                if (JSON.stringify(incoming) === JSON.stringify(appState.categories)) continue;
+                                appState.categories = incoming;
+                                appState.__categoriesUpdatedAt = ch.updatedAt;
+                                changed = true;
+                            }
+                            if (changed) {
+                                window.updateCategoryDropdowns();
+                                window.persistState();
+                            }
+                            return changed;
+                        }
+                    }
+                },
+                makeConflict: (collection, localRecord, serverRecord) => {
+                    if (collection !== 'docs' || !localRecord) return;
+                    const id = 'conflict-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+                    appState.docs.push({
+                        ...localRecord,
+                        id,
+                        title: (localRecord.title || 'Untitled') + ' · 冲突副本',
+                        updatedAt: Date.now()
+                    });
+                    window.persistState();
+                },
+                onApplied: () => {
+                    window.updateCategoryDropdowns();
+                    window.updateTagDropdown();
+                    window.renderDocList();
+                    if (appState.activeDocId) window.loadDoc(appState.activeDocId);
+                },
+                onStatus: renderSyncBadge
+            });
+        }
+
+        function syncAccountMode() {
+            const acc = window.VibeSync.getAccount();
+            return acc.available && !window.VibeSync.getConfig().server;
+        }
+
+        window.openSyncSettings = function() {
+            const accountMode = syncAccountMode();
+            const acc = window.VibeSync.getAccount();
+            document.getElementById('sync-account').classList.toggle('hidden', !accountMode);
+            document.getElementById('sync-manual').classList.toggle('hidden', accountMode);
+            document.getElementById('sync-save').classList.toggle('hidden', accountMode);
+            document.getElementById('sync-user').textContent = (acc.user && acc.user.username) || '—';
+            document.getElementById('sync-server').value = window.VibeSync.getConfig().server || '';
+            document.getElementById('sync-token').value = window.VibeSync.getConfig().token || '';
+            document.getElementById('sync-enabled').checked = !!window.VibeSync.getConfig().enabled;
+            document.getElementById('sync-message').textContent = '';
+            document.getElementById('sync-admin-link').classList.toggle('hidden', !(acc.user && acc.user.role === 'admin'));
+            renderSyncConflicts();
+            document.getElementById('sync-modal').classList.remove('hidden');
+        };
+
+        window.closeSyncSettings = function() {
+            document.getElementById('sync-modal').classList.add('hidden');
+        };
+
+        window.syncLogout = function() {
+            window.VibeSync.logout();
+        };
+
+        window.testSyncConnection = async function() {
+            const msg = document.getElementById('sync-message');
+            msg.className = 'text-xs text-slate-500';
+            msg.textContent = 'Testing…';
+            try {
+                const res = await window.VibeSync.testConnection(syncAccountMode() ? {} : {
+                    server: document.getElementById('sync-server').value.trim(),
+                    token: document.getElementById('sync-token').value.trim()
+                });
+                msg.className = 'text-xs text-emerald-600';
+                msg.textContent = `Connected. Server seq ${res.state.seq}, ${res.state.count} records.`;
+            } catch (e) {
+                msg.className = 'text-xs text-red-500';
+                msg.textContent = 'Failed: ' + (e.message || e);
+            }
+        };
+
+        window.saveSyncSettings = function() {
+            if (!syncAccountMode()) {
+                window.VibeSync.configure({
+                    server: document.getElementById('sync-server').value.trim(),
+                    token: document.getElementById('sync-token').value.trim(),
+                    enabled: document.getElementById('sync-enabled').checked
+                });
+            }
+            window.closeSyncSettings();
+            renderSyncBadge(window.VibeSync.getStatus());
+        };
+
+        window.syncNowManual = async function() {
+            const msg = document.getElementById('sync-message');
+            if (!syncAccountMode()) {
+                window.VibeSync.configure({
+                    server: document.getElementById('sync-server').value.trim(),
+                    token: document.getElementById('sync-token').value.trim(),
+                    enabled: true
+                });
+                document.getElementById('sync-enabled').checked = true;
+            }
+            msg.className = 'text-xs text-slate-500';
+            msg.textContent = 'Syncing…';
+            await window.VibeSync.syncNow();
+            const st = window.VibeSync.getStatus();
+            if (st.phase === 'error') {
+                msg.className = 'text-xs text-red-500';
+                msg.textContent = 'Failed: ' + (st.lastError || 'unknown');
+            } else if (st.phase === 'login-required') {
+                msg.className = 'text-xs text-amber-600';
+                msg.textContent = '请先登录。';
+            } else {
+                msg.className = 'text-xs text-emerald-600';
+                msg.textContent = 'Synced at ' + new Date().toLocaleTimeString();
+            }
+        };
+
+        function syncEscape(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // ===== 版本历史 =====
+        window.openHistory = async function() {
+            const doc = appState.docs.find(d => d.id === appState.activeDocId);
+            if (!doc) return;
+            document.getElementById('history-doc').textContent = doc.title || '无标题';
+            document.getElementById('history-list').innerHTML = '<div class="text-xs text-slate-400 p-2">加载中…</div>';
+            document.getElementById('history-modal').classList.remove('hidden');
+            try {
+                const res = await fetch(`/api/v1/sync/history?app=prompt-capsule&collection=docs&id=${encodeURIComponent(doc.id)}&limit=100`, { credentials: 'same-origin' });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+                const list = document.getElementById('history-list');
+                if (!data.versions.length) {
+                    list.innerHTML = '<div class="text-xs text-slate-400 p-2">还没有云端历史。同步过一次后，每次修改都会留下版本。</div>';
+                    return;
+                }
+                list.innerHTML = data.versions.map((v, i) => `
+                    <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                        <div class="min-w-0">
+                            <div class="text-xs font-semibold text-slate-700 truncate">${v.deleted ? '（已删除）' : syncEscape((v.data && v.data.title) || '无标题')}</div>
+                            <div class="text-[11px] text-slate-400 mt-0.5">${new Date(v.updatedAt).toLocaleString()} · ${syncEscape(v.deviceId || '未知设备')}${i === 0 ? ' · 当前' : ''}</div>
+                        </div>
+                        ${i === 0 ? '' : `<button onclick="window.restoreVersion(${v.seq})" class="shrink-0 px-2.5 py-1.5 text-xs font-medium text-primary bg-white border border-indigo-200 rounded-md hover:bg-indigo-50">恢复</button>`}
+                    </div>`).join('');
+            } catch (e) {
+                document.getElementById('history-list').innerHTML = `<div class="text-xs text-red-500 p-2">加载失败：${syncEscape(e.message)}</div>`;
+            }
+        };
+
+        window.closeHistory = function() {
+            document.getElementById('history-modal').classList.add('hidden');
+        };
+
+        window.restoreVersion = async function(seq) {
+            const doc = appState.docs.find(d => d.id === appState.activeDocId);
+            if (!doc || !confirm('恢复到这个版本？当前内容会作为新版本保留在历史里。')) return;
+            try {
+                const res = await fetch('/api/v1/sync/restore', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app: 'prompt-capsule', collection: 'docs', id: doc.id, seq })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+                await window.VibeSync.syncNow();
+                window.closeHistory();
+                alert('已恢复。');
+            } catch (e) {
+                alert('恢复失败：' + e.message);
+            }
+        };
+
+        // ===== 冲突 =====
+        function renderSyncConflicts() {
+            const box = document.getElementById('sync-conflicts');
+            if (!box) return;
+            const list = window.VibeSync.getConflicts();
+            window.__syncConflictList = list;
+            if (!list.length) {
+                box.classList.add('hidden');
+                box.innerHTML = '';
+                return;
+            }
+            box.classList.remove('hidden');
+            box.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="text-xs font-semibold text-slate-600">冲突记录（${list.length}）</div>
+                    <button onclick="window.clearSyncConflicts()" class="text-[11px] text-slate-400 hover:text-red-500">清除</button>
+                </div>
+                <div class="space-y-2 max-h-44 overflow-y-auto pr-1">
+                    ${list.slice().reverse().slice(0, 20).map((c, i) => {
+                        const idx = list.length - 1 - i;
+                        return `
+                        <div class="p-2.5 bg-amber-50/70 border border-amber-100 rounded-lg">
+                            <div class="text-xs text-slate-700 truncate">${syncEscape((c.local && c.local.title) || c.id)}</div>
+                            <div class="text-[11px] text-slate-400 mt-0.5">${new Date(c.at).toLocaleString()} · ${syncEscape(c.collection)}</div>
+                            <button onclick="window.restoreConflict(${idx})" class="mt-1.5 text-[11px] font-medium text-amber-700 hover:underline">把本地版本恢复为独立文档</button>
+                        </div>`;
+                    }).join('')}
+                </div>`;
+        }
+
+        window.clearSyncConflicts = function() {
+            window.VibeSync.clearConflicts();
+            renderSyncConflicts();
+        };
+
+        window.restoreConflict = function(idx) {
+            const c = (window.__syncConflictList || [])[idx];
+            if (!c || !c.local) return;
+            const id = 'restored-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+            appState.docs.push({
+                ...c.local,
+                id,
+                title: (c.local.title || 'Untitled') + ' · 恢复',
+                updatedAt: Date.now()
+            });
+            window.persistState();
+            window.renderDocList();
+            renderSyncConflicts();
+            window.syncNowManual();
+        };
+
+        // ===== 云端备份 =====
+        window.exportCloudBackup = async function() {
+            const msg = document.getElementById('sync-message');
+            try {
+                const res = await fetch('/api/v1/backup/export?app=prompt-capsule', { credentials: 'same-origin' });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `prompt-capsule-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(a.href);
+                if (msg) { msg.className = 'text-xs text-emerald-600'; msg.textContent = `已导出 ${data.count} 条记录。`; }
+            } catch (e) {
+                if (msg) { msg.className = 'text-xs text-red-500'; msg.textContent = '导出失败：' + e.message; }
+            }
+        };
+
+        window.triggerCloudRestore = function() {
+            document.getElementById('cloud-restore-input').click();
+        };
+
+        window.handleCloudRestore = async function(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const msg = document.getElementById('sync-message');
+            try {
+                const parsed = JSON.parse(await file.text());
+                const records = Array.isArray(parsed.records) ? parsed.records : (Array.isArray(parsed) ? parsed : null);
+                if (!records) throw new Error('文件里没有 records 字段');
+                const replace = confirm('确定要用备份覆盖云端吗？\n\n确定 = 替换云端（先删除云上现有记录再导入）\n取消 = 仅合并缺失记录');
+                const res = await fetch('/api/v1/backup/import', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app: 'prompt-capsule', mode: replace ? 'replace' : 'merge', records })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+                await window.VibeSync.restoreFromCloud();
+                if (msg) { msg.className = 'text-xs text-emerald-600'; msg.textContent = `恢复完成：导入 ${data.imported} 条，跳过 ${data.skipped} 条。`; }
+            } catch (e) {
+                if (msg) { msg.className = 'text-xs text-red-500'; msg.textContent = '恢复失败：' + e.message; }
+            }
+            input.value = '';
+        };
+
+        window.addEventListener('DOMContentLoaded', () => setTimeout(initVibeSync, 0));
     </script>
     
 </body>

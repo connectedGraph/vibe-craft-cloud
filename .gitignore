@@ -1,0 +1,13 @@
+# 同步服务端数据（含 token、SQLite）
+server/data/
+
+# 本地配置
+.env
+.env.local
+
+# 日志与临时文件
+*.log
+.DS_Store
+
+# 部署凭据
+deploy/tx-credentials.txt

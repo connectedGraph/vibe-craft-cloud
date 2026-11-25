@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vibe Craft · 登录</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: rgba(15, 23, 42, 0.12);
+    --primary: #6366f1;
+    --primary-dark: #4338ca;
+    --bg: #eef1ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    color: var(--ink);
+    background: #eef1ff;
+    background-image:
+      radial-gradient(at 8% 6%, rgba(99, 102, 241, 0.22) 0px, transparent 45%),
+      radial-gradient(at 95% 92%, rgba(168, 85, 247, 0.18) 0px, transparent 42%),
+      linear-gradient(135deg, #f7f8ff 0%, #e8ecff 100%);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 24px;
+    box-shadow: 0 24px 60px -24px rgba(49, 46, 129, 0.35), 0 2px 8px rgba(15, 23, 42, 0.04);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    padding: 32px 28px 26px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; letter-spacing: -0.02em; font-size: 15px; color: var(--ink);
+    margin-bottom: 26px;
+  }
+  .brand .mark {
+    width: 34px; height: 34px; border-radius: 11px;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    box-shadow: 0 8px 20px -8px rgba(99, 102, 241, 0.8);
+    display: grid; place-items: center; color: #fff; font-size: 17px;
+  }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.03em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 22px; line-height: 1.6; }
+  .field { margin-bottom: 14px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px; }
+  input[type="text"], input[type="password"] {
+    width: 100%; padding: 11px 12px; font-size: 14px; color: var(--ink);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid var(--line); border-radius: 11px; outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15); }
+  .pw { position: relative; }
+  .pw input { padding-right: 42px; }
+  .eye {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    border: 0; background: transparent; color: #94a3b8; cursor: pointer;
+    padding: 8px; border-radius: 8px; line-height: 0;
+  }
+  .eye:hover { color: var(--primary); background: rgba(99, 102, 241, 0.08); }
+  .eye svg { width: 18px; height: 18px; }
+  .eye .off { display: none; }
+  .eye.on .on { display: none; }
+  .eye.on .off { display: block; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 18px; }
+  .check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); user-select: none; }
+  .btn {
+    width: 100%; padding: 12px 16px; border: 0; border-radius: 12px;
+    background: linear-gradient(135deg, var(--primary), #7c3aed);
+    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 12px 26px -12px rgba(99, 102, 241, 0.9);
+    transition: transform .12s, box-shadow .2s, opacity .2s;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 16px 30px -12px rgba(99, 102, 241, 0.95); }
+  .btn:disabled { opacity: .6; cursor: default; transform: none; }
+  .err {
+    display: none; margin-bottom: 14px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #b91c1c; font-size: 12.5px; line-height: 1.5;
+  }
+  .err.on { display: block; }
+  .meta { margin-top: 18px; text-align: center; font-size: 12px; color: var(--muted); }
+  .meta a { color: var(--primary); text-decoration: none; cursor: pointer; }
+  .meta a:hover { text-decoration: underline; }
+  .hint {
+    margin-top: 16px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(99, 102, 241, 0.06); border: 1px solid rgba(99, 102, 241, 0.14);
+    color: #475569; font-size: 12px; line-height: 1.6;
+  }
+  .hint b { color: var(--primary-dark); }
+  .strength { display: flex; gap: 4px; margin-top: 7px; align-items: center; }
+  .strength i { height: 3px; flex: 1; border-radius: 99px; background: rgba(15, 23, 42, 0.1); }
+  .strength.on.s1 i:nth-child(1) { background: #f87171; }
+  .strength.on.s2 i:nth-child(-n+2) { background: #fbbf24; }
+  .strength.on.s3 i { background: #34d399; }
+  .strength span { font-size: 11px; color: var(--muted); min-width: 28px; text-align: right; }
+  [hidden] { display: none !important; }
+</style>
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+</head>
+<body>
+<div class="card">
+  <div class="brand"><span class="mark">✦</span> Vibe Craft</div>
+
+  <div class="err" id="err"></div>
+
+  <section id="p-login">
+    <h1>登入</h1>
+    <p class="sub">用这个实例的账号继续。数据仍存在你浏览器里，云端只做多设备同步与备份。</p>
+    <form id="f-login">
+      <div class="field"><label>用户名</label><input name="username" autocomplete="username" autocapitalize="off" required></div>
+      <div class="field">
+        <label>密码</label>
+        <div class="pw">
+          <input name="password" type="password" autocomplete="current-password" required>
+          <button class="eye" type="button" aria-label="显示密码">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.1 3.7M6.3 7.6C3.9 9.3 2 12 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="row"><label class="check"><input type="checkbox" name="remember"> 保持登录 30 天</label></div>
+      <button class="btn" type="submit">登录</button>
+    </form>
+    <div class="hint" id="default-hint" hidden><b>默认密码 123456</b><br>首次登录会被要求改成自己的密码，不用再输入一遍旧的。</div>
+    <div class="meta"><span id="reg-switch" hidden>还没有账号？<a data-go="register">注册</a></span></div>
+  </section>
+
+  <section id="p-register" hidden>
+    <h1>注册</h1>
+    <p class="sub">这个实例开放注册，数据按账号隔离。</p>
+    <form id="f-register">
+      <div class="field"><label>用户名</label><input name="username" autocapitalize="off" required placeholder="3–32 位字母数字下划线"></div>
+      <div class="field">
+        <label>密码</label>
+        <div class="pw">
+          <input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位">
+          <button class="eye" type="button" aria-label="显示密码">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.1 3.7M6.3 7.6C3.9 9.3 2 12 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
+        </div>
+        <div class="strength" data-strength><i></i><i></i><i></i><span></span></div>
+      </div>
+      <div class="field" id="invite-field" hidden><label>邀请码</label><input name="invite" autocapitalize="off"></div>
+      <button class="btn" type="submit">创建账号</button>
+    </form>
+    <div class="meta">已有账号？<a data-go="login">去登录</a></div>
+  </section>
+
+  <section id="p-change" hidden>
+    <h1>设一个新密码</h1>
+    <p class="sub">初始密码是公开的，换成你自己的才能进主界面。</p>
+    <form id="f-change">
+      <div class="field" id="cur-field">
+        <label>当前密码</label>
+        <div class="pw">
+          <input name="current" type="password" autocomplete="current-password">
+          <button class="eye" type="button" aria-label="显示密码">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.1 3.7M6.3 7.6C3.9 9.3 2 12 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field">
+        <label>新密码</label>
+        <div class="pw">
+          <input name="next" type="password" autocomplete="new-password" required placeholder="至少 8 位">
+          <button class="eye" type="button" aria-label="显示密码">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.1 3.7M6.3 7.6C3.9 9.3 2 12 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
+        </div>
+        <div class="strength" data-strength><i></i><i></i><i></i><span></span></div>
+      </div>
+      <div class="field">
+        <label>再输一次</label>
+        <div class="pw">
+          <input name="repeat" type="password" autocomplete="new-password" required>
+          <button class="eye" type="button" aria-label="显示密码">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.1 3.7M6.3 7.6C3.9 9.3 2 12 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn" type="submit">保存并进入</button>
+    </form>
+    <div class="hint" id="forced-hint" hidden><b>不用再输一遍</b><br>你刚才已经用初始密码登录过了，直接设新的就行。</div>
+  </section>
+
+  <section id="p-off" hidden>
+    <h1>匿名模式</h1>
+    <p class="sub">这个实例没有开启登录，所有访问算同一个账号。</p>
+    <a class="btn" href="/" style="display:block;text-align:center;text-decoration:none">直接进入</a>
+  </section>
+</div>
+
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  }
+</script>
+<script src="/login.js"></script>
+</body>
+</html>

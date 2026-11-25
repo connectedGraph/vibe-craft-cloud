@@ -54,6 +54,8 @@
         .prose code { background-color:#F3F4F6; padding:0.1rem 0.3rem; border-radius:0.25rem; font-size:0.875rem; }
         .prose blockquote { border-left:3px solid #D1D5DB; padding-left:0.75rem; color:#6B7280; font-style:italic; }
     </style>
+    <script src="../shared/sync-client.js"></script>
+    <script src="../shared/sync-widget.js"></script>
 </head>
 <body class="min-h-screen flex antialiased" id="app-body">
 <!-- Sidebar Navigation -->
@@ -1097,6 +1099,118 @@ window.onload = function() {
     const quotes = ['"纯粹至美，至简则灵"', '"把灵感交给剪贴板，把心交给专注"', '"少即是多"', '"深沉的知识，始于每一次开坑"'];
     document.getElementById('sidebar-quote').textContent = quotes[Math.floor(Math.random() * quotes.length)];
 };
+
+// ===== CLOUD SYNC =====
+window.addEventListener('load', () => {
+    if (!window.SyncWidget) return;
+
+    const applyList = (key, changes) => {
+        let changed = false;
+        for (const ch of changes) {
+            const arr = state[key];
+            if (!Array.isArray(arr)) continue;
+            const idx = arr.findIndex(x => String(x.id) === String(ch.id));
+            if (ch.op === 'delete') {
+                if (idx !== -1) { arr.splice(idx, 1); changed = true; }
+                continue;
+            }
+            if (!ch.data) continue;
+            const incoming = {
+                ...ch.data,
+                updatedAt: Math.max(Number(ch.data.updatedAt) || 0, Number(ch.updatedAt) || 0)
+            };
+            if (idx === -1) {
+                arr.push(incoming);
+                changed = true;
+            } else if (Number(incoming.updatedAt) > Number(arr[idx].updatedAt || 0)) {
+                arr[idx] = incoming;
+                changed = true;
+            }
+        }
+        return changed;
+    };
+
+    window.SyncWidget.mount({
+        app: 'desktop-lite',
+        collections: {
+            clipboards: {
+                read: () => state.clipboards,
+                getId: r => r.id,
+                getUpdatedAt: r => Number(r.updatedAt) || 0,
+                applyChanges: (changes) => applyList('clipboards', changes)
+            },
+            inboxItems: {
+                read: () => state.inboxItems,
+                getId: r => r.id,
+                getUpdatedAt: r => Number(r.updatedAt) || 0,
+                applyChanges: (changes) => applyList('inboxItems', changes)
+            },
+            pits: {
+                read: () => state.pits,
+                getId: r => r.id,
+                getUpdatedAt: r => Number(r.updatedAt) || 0,
+                applyChanges: (changes) => applyList('pits', changes)
+            },
+            dailyLogs: {
+                read: () => Object.entries(state.dailyLogs || {}).map(([date, v]) => ({ id: date, ...v })),
+                getId: r => r.id,
+                getUpdatedAt: r => Number(r.updatedAt) || 0,
+                applyChanges: (changes) => {
+                    let changed = false;
+                    for (const ch of changes) {
+                        if (ch.op === 'delete') {
+                            if (state.dailyLogs[ch.id]) { delete state.dailyLogs[ch.id]; changed = true; }
+                            continue;
+                        }
+                        if (!ch.data) continue;
+                        const { id, ...rest } = ch.data;
+                        state.dailyLogs[ch.id] = {
+                            ...rest,
+                            updatedAt: Math.max(Number(ch.data.updatedAt) || 0, Number(ch.updatedAt) || 0)
+                        };
+                        changed = true;
+                    }
+                    return changed;
+                }
+            },
+            settings: {
+                read: () => [{
+                    id: '__singleton__',
+                    logTopics: state.logTopics,
+                    currentLogTopic: state.currentLogTopic,
+                    plannerSlots: state.plannerSlots,
+                    timeline: state.timeline,
+                    pomodoro: { duration: state.pomodoro.duration },
+                    updatedAt: Number(state.__settingsUpdatedAt) || 0
+                }],
+                getId: r => r.id,
+                getUpdatedAt: r => Number(r.updatedAt) || 0,
+                applyChanges: (changes) => {
+                    let changed = false;
+                    for (const ch of changes) {
+                        if (ch.op === 'delete' || !ch.data) continue;
+                        const d = ch.data;
+                        if (Array.isArray(d.logTopics)) state.logTopics = d.logTopics;
+                        if (typeof d.currentLogTopic === 'string') state.currentLogTopic = d.currentLogTopic;
+                        if (d.plannerSlots && typeof d.plannerSlots === 'object') state.plannerSlots = d.plannerSlots;
+                        if (Array.isArray(d.timeline)) state.timeline = d.timeline;
+                        if (d.pomodoro && Number.isFinite(d.pomodoro.duration)) {
+                            state.pomodoro.duration = d.pomodoro.duration;
+                            if (!state.pomodoro.isRunning) state.pomodoro.remaining = d.pomodoro.duration * 60;
+                        }
+                        state.__settingsUpdatedAt = ch.updatedAt;
+                        changed = true;
+                    }
+                    return changed;
+                }
+            }
+        },
+        onApplied: () => {
+            saveState();
+            renderCurrentView();
+        }
+    });
+});
 
 // ===== KEYBOARD SHORTCUTS =====
 document.addEventListener('keydown', (e) => {

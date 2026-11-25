@@ -11,3 +11,4 @@ server/data/
 
 # 部署凭据
 deploy/tx-credentials.txt
+deploy/*.bundle

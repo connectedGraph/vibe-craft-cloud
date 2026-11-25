@@ -4,7 +4,7 @@
 
 A collection of lightweight, zero-dependency, web-based Single Page Applications (SPAs) designed to optimize development, learning, and knowledge management workflows.
 
-> **This fork adds optional cloud sync.** localStorage remains the local source of truth; the sync server only relays incremental changes between devices and keeps a backup. See [Cloud Sync](#cloud-sync) and [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md). Currently wired up for **Prompt Capsule**; the other tools use the same client (`shared/sync-client.js`) with their own adapter.
+> **Status (2026-11-25): frozen.** The live site `https://craft.6767.chat/` now runs the full-stack Next.js rewrite at [connectedGraph/vibe-craft-next](https://github.com/connectedGraph/vibe-craft-next); this repo keeps the original plain-HTML service and shared browser scripts, and still serves as the reference implementation for the sync protocol. The old process on port 8792 is stopped and disabled.
 
 ---
 
